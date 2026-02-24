@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import pool from '../config/db'
+import { sendProductApprovedEmail, sendProductRejectedEmail } from '../config/email'
 
-// ── Helper: log every admin action ───────────────────────────────────────────
 const logAction = async (
     adminId: string,
     action: string,
@@ -16,7 +16,6 @@ const logAction = async (
     )
 }
 
-// ── Dashboard stats ───────────────────────────────────────────────────────────
 export const getStats = async (req: any, res: Response) => {
     try {
         const [users, products, orders, revenue] = await Promise.all([
@@ -27,12 +26,9 @@ export const getStats = async (req: any, res: Response) => {
                   FROM orders o JOIN products p ON o.product_id = p.id
                   WHERE o.status = 'DELIVERED'`),
         ])
-
         const pendingProducts = await pool.query(`SELECT COUNT(*) FROM products WHERE status = 'PENDING'`)
         const pendingOrders = await pool.query(`SELECT COUNT(*) FROM orders WHERE status = 'PENDING'`)
-        const todayOrders = await pool.query(
-            `SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE`
-        )
+        const todayOrders = await pool.query(`SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE`)
 
         return res.json({
             data: {
@@ -51,7 +47,6 @@ export const getStats = async (req: any, res: Response) => {
     }
 }
 
-// ── User management ───────────────────────────────────────────────────────────
 export const getAllUsers = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
@@ -71,10 +66,7 @@ export const getAllUsers = async (req: any, res: Response) => {
 export const verifySeller = async (req: any, res: Response) => {
     const { id } = req.params
     try {
-        await pool.query(
-            `UPDATE users SET verified_status = true WHERE id = $1`,
-            [id]
-        )
+        await pool.query(`UPDATE users SET verified_status = true WHERE id = $1`, [id])
         await logAction(req.user.id, 'VERIFY_SELLER', 'user', id, 'Seller verified')
         return res.json({ message: 'Seller verified' })
     } catch (err) {
@@ -86,10 +78,7 @@ export const verifySeller = async (req: any, res: Response) => {
 export const suspendUser = async (req: any, res: Response) => {
     const { id } = req.params
     try {
-        await pool.query(
-            `UPDATE users SET verified_status = false WHERE id = $1`,
-            [id]
-        )
+        await pool.query(`UPDATE users SET verified_status = false WHERE id = $1`, [id])
         await logAction(req.user.id, 'SUSPEND_USER', 'user', id, 'User suspended')
         return res.json({ message: 'User suspended' })
     } catch (err) {
@@ -111,7 +100,6 @@ export const changeUserRole = async (req: any, res: Response) => {
     }
 }
 
-// ── Product management ────────────────────────────────────────────────────────
 export const getAllProducts = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
@@ -133,6 +121,17 @@ export const approveProduct = async (req: any, res: Response) => {
     try {
         await pool.query(`UPDATE products SET status = 'APPROVED' WHERE id = $1`, [id])
         await logAction(req.user.id, 'APPROVE_PRODUCT', 'product', id, 'Product approved')
+
+        const product = await pool.query(
+            `SELECT p.title, u.name, u.email FROM products p
+       JOIN users u ON p.seller_id = u.id WHERE p.id = $1`,
+            [id]
+        )
+        if (product.rows.length > 0) {
+            const p = product.rows[0]
+            sendProductApprovedEmail(p.email, p.name, p.title).catch(console.error)
+        }
+
         return res.json({ message: 'Product approved' })
     } catch (err) {
         console.error(err)
@@ -145,6 +144,17 @@ export const rejectProduct = async (req: any, res: Response) => {
     try {
         await pool.query(`UPDATE products SET status = 'REJECTED' WHERE id = $1`, [id])
         await logAction(req.user.id, 'REJECT_PRODUCT', 'product', id, 'Product rejected')
+
+        const product = await pool.query(
+            `SELECT p.title, u.name, u.email FROM products p
+       JOIN users u ON p.seller_id = u.id WHERE p.id = $1`,
+            [id]
+        )
+        if (product.rows.length > 0) {
+            const p = product.rows[0]
+            sendProductRejectedEmail(p.email, p.name, p.title).catch(console.error)
+        }
+
         return res.json({ message: 'Product rejected' })
     } catch (err) {
         console.error(err)
@@ -152,7 +162,6 @@ export const rejectProduct = async (req: any, res: Response) => {
     }
 }
 
-// ── Order management ──────────────────────────────────────────────────────────
 export const getAllOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
@@ -183,7 +192,6 @@ export const updateOrderStatus = async (req: any, res: Response) => {
     }
 }
 
-// ── Audit logs ────────────────────────────────────────────────────────────────
 export const getAuditLogs = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
@@ -200,7 +208,6 @@ export const getAuditLogs = async (req: any, res: Response) => {
     }
 }
 
-// ── Revenue report ────────────────────────────────────────────────────────────
 export const getRevenueReport = async (req: any, res: Response) => {
     try {
         const daily = await pool.query(

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import pool from '../config/db'
+import { sendWelcomeEmail } from '../config/email'
 
 export const register = async (req: Request, res: Response) => {
     const { name, email, phone, password, role } = req.body
@@ -28,6 +29,8 @@ export const register = async (req: Request, res: Response) => {
             process.env.JWT_SECRET as string,
             { expiresIn: '7d' }
         )
+        // Send welcome email (non-blocking)
+        sendWelcomeEmail(email, name, role || 'BUYER').catch(console.error)
 
         return res.status(201).json({ token, user })
     } catch (err) {
