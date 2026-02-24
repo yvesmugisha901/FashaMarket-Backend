@@ -29,6 +29,9 @@ export const getStats = async (req: any, res: Response) => {
         const pendingProducts = await pool.query(`SELECT COUNT(*) FROM products WHERE status = 'PENDING'`)
         const pendingOrders = await pool.query(`SELECT COUNT(*) FROM orders WHERE status = 'PENDING'`)
         const todayOrders = await pool.query(`SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE`)
+        const commission = await pool.query(
+            `SELECT COALESCE(SUM(commission_amount), 0) as total FROM orders WHERE status = 'DELIVERED'`
+        )
 
         return res.json({
             data: {
@@ -39,6 +42,7 @@ export const getStats = async (req: any, res: Response) => {
                 pending_products: parseInt(pendingProducts.rows[0].count),
                 pending_orders: parseInt(pendingOrders.rows[0].count),
                 today_orders: parseInt(todayOrders.rows[0].count),
+                total_commission: parseFloat(commission.rows[0].total),
             }
         })
     } catch (err) {
