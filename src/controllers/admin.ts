@@ -170,11 +170,12 @@ export const getAllOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*, p.title as product_title, p.price as product_price,
-              u.name as buyer_name, u.phone as buyer_phone
-       FROM orders o
-       JOIN products p ON o.product_id = p.id
-       JOIN users u ON o.user_id = u.id
-       ORDER BY o.created_at DESC`
+          u.name as buyer_name, u.phone as buyer_phone,
+          o.payment_reference, o.payment_confirmed_at
+   FROM orders o
+   JOIN products p ON o.product_id = p.id
+   JOIN users u ON o.user_id = u.id
+   ORDER BY o.created_at DESC`
         )
         return res.json({ data: result.rows })
     } catch (err) {

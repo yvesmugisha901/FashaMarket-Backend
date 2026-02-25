@@ -55,6 +55,11 @@ export const create = async (req: any, res: Response) => {
 
         const p = product.rows[0]
 
+        if (p.seller_id === req.user.id) {
+            return res.status(400).json({ message: 'You cannot buy your own product' })
+        }
+
+
         const buyer = await pool.query(
             'SELECT name, email FROM users WHERE id = $1',
             [req.user.id]
@@ -341,6 +346,36 @@ export const getAll = async (req: any, res: Response) => {
        ORDER BY o.created_at DESC`
         )
         return res.json({ data: result.rows })
+    } catch (err) {
+        console.error(err)
+        return res.status(500).json({ message: 'Server error' })
+    }
+}
+
+export const confirmCashReceived = async (req: any, res: Response) => {
+    const { id } = req.params
+    try {
+        // Verify the order belongs to this seller
+        const order = await pool.query(
+            `SELECT o.* FROM orders o
+       JOIN products p ON o.product_id = p.id
+       WHERE o.id = $1 AND p.seller_id = $2`,
+            [id, req.user.id]
+        )
+        if (order.rows.length === 0) {
+            return res.status(404).json({ message: 'Order not found' })
+        }
+        if (order.rows[0].payment_method !== 'COD') {
+            return res.status(400).json({ message: 'Not a cash on delivery order' })
+        }
+
+        await pool.query(
+            `UPDATE orders SET status = 'PAID', payment_confirmed_at = NOW(),
+       payment_reference = 'CASH_ON_DELIVERY' WHERE id = $1`,
+            [id]
+        )
+
+        return res.json({ message: 'Cash payment confirmed' })
     } catch (err) {
         console.error(err)
         return res.status(500).json({ message: 'Server error' })
