@@ -84,6 +84,17 @@ app.use(errorHandler)
 const PORT = process.env.PORT || 5000
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`)
+    console.log(`Environment: ${process.env.NODE_ENV}`)
+    console.log(`Database URL exists: ${!!process.env.DATABASE_URL}`)
+    console.log(`JWT Secret exists: ${!!process.env.JWT_SECRET}`)
+})
+
+process.on('unhandledRejection', (err) => {
+    console.error('Unhandled rejection:', err)
+})
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err)
 })
 
 export default app
