@@ -3,6 +3,63 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import pool from '../config/db'
 import { sendWelcomeEmail } from '../config/email'
+import crypto from 'crypto'
+
+export const forgotPassword = async (req: Request, res: Response) => {
+    const { email } = req.body
+    try {
+        const result = await pool.query('SELECT id, name FROM users WHERE email = $1', [email])
+        if (result.rows.length === 0) {
+            // Don't reveal if email exists
+            return res.json({ message: 'If that email exists, a reset link has been sent.' })
+        }
+
+        const user = result.rows[0]
+        const token = crypto.randomBytes(32).toString('hex')
+        const expires = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+
+        await pool.query(
+            'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+            [token, expires, user.id]
+        )
+
+        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`
+        console.log(`Password reset link for ${email}: ${resetUrl}`)
+
+        // TODO: Send email when email provider is configured
+        // await sendEmail({ to: email, subject: 'Reset your password', html: `<a href="${resetUrl}">Reset password</a>` })
+
+        res.json({ message: 'If that email exists, a reset link has been sent.' })
+    } catch (err) {
+        console.error(err)
+        res.status(500).json({ message: 'Server error' })
+    }
+}
+
+export const resetPassword = async (req: Request, res: Response) => {
+    const { token, password } = req.body
+    try {
+        const result = await pool.query(
+            'SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
+            [token]
+        )
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ message: 'Reset link is invalid or expired.' })
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10)
+        await pool.query(
+            'UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2',
+            [hashedPassword, result.rows[0].id]
+        )
+
+        res.json({ message: 'Password reset successfully.' })
+    } catch (err) {
+        console.error(err)
+        res.status(500).json({ message: 'Server error' })
+    }
+}
 
 export const register = async (req: Request, res: Response) => {
     const validationError = checkValidation(req, res)
