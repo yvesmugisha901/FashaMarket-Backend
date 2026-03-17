@@ -59,6 +59,10 @@ export const create = async (req: any, res: Response) => {
             return res.status(400).json({ message: 'You cannot buy your own product' })
         }
 
+        // Check stock
+        if (p.stock_quantity <= 0) {
+            return res.status(400).json({ message: 'This product is out of stock.' })
+        }
 
         const buyer = await pool.query(
             'SELECT name, email FROM users WHERE id = $1',
@@ -73,6 +77,12 @@ export const create = async (req: any, res: Response) => {
         const commissionRate = parseFloat(settingsResult.rows[0]?.value || '10')
         const commissionAmount = (p.price * commissionRate) / 100
         const sellerAmount = p.price - commissionAmount
+
+        // Reduce stock by 1
+        await pool.query(
+            `UPDATE products SET stock_quantity = stock_quantity - 1 WHERE id = $1`,
+            [product_id]
+        )
 
         const order = await pool.query(
             `INSERT INTO orders (user_id, product_id, payment_method, status, commission_rate, commission_amount, seller_amount)
@@ -289,6 +299,7 @@ export const sellerOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*, p.title as product_title, p.price as product_price,
+              p.stock_quantity,
               u.name as buyer_name, u.phone as buyer_phone, u.email as buyer_email,
               a.signed_at as buyer_signed_at, a.seller_signed_at
        FROM orders o
@@ -355,7 +366,6 @@ export const getAll = async (req: any, res: Response) => {
 export const confirmCashReceived = async (req: any, res: Response) => {
     const { id } = req.params
     try {
-        // Verify the order belongs to this seller
         const order = await pool.query(
             `SELECT o.* FROM orders o
        JOIN products p ON o.product_id = p.id
@@ -368,13 +378,11 @@ export const confirmCashReceived = async (req: any, res: Response) => {
         if (order.rows[0].payment_method !== 'COD') {
             return res.status(400).json({ message: 'Not a cash on delivery order' })
         }
-
         await pool.query(
             `UPDATE orders SET status = 'PAID', payment_confirmed_at = NOW(),
        payment_reference = 'CASH_ON_DELIVERY' WHERE id = $1`,
             [id]
         )
-
         return res.json({ message: 'Cash payment confirmed' })
     } catch (err) {
         console.error(err)

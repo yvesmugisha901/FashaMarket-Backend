@@ -55,13 +55,13 @@ export const getById = async (req: Request, res: Response) => {
 }
 
 export const create = async (req: any, res: Response) => {
-    const { title, description, price, condition, category_id, images } = req.body
+    const { title, description, price, condition, category_id, images, stock_quantity } = req.body
     try {
         const result = await pool.query(
-            `INSERT INTO products (seller_id, title, description, price, condition, category_id, images)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO products (seller_id, title, description, price, condition, category_id, images, stock_quantity)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-            [req.user.id, title, description, price, condition, category_id, images || []]
+            [req.user.id, title, description, price, condition, category_id, images || [], stock_quantity || 1]
         )
         return res.status(201).json({ data: result.rows[0] })
     } catch (err) {
