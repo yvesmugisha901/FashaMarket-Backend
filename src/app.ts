@@ -27,30 +27,36 @@ app.use(helmet({
 }))
 
 /**
- * CORS FIX (Vercel + Local + Postman safe)
+ * CORS CONFIGURATION
  */
 const allowedOrigins = [
     'https://fashamarket.vercel.app',
-    'https://fasha-market-frontend-4q2piabh1-yves-projects-49262b89.vercel.app',
-    'http://localhost:5173'
+    'http://localhost:5173',
 ]
 
-app.use(cors({
+const corsOptions: cors.CorsOptions = {
     origin: function (origin, callback) {
-        // allow Postman / server-to-server requests
+        // Allow Postman / server-to-server requests (no origin)
         if (!origin) return callback(null, true)
 
-        if (allowedOrigins.includes(origin)) {
-            callback(null, true)
-        } else {
-            // IMPORTANT: do NOT throw error (this breaks CORS preflight)
-            callback(null, false)
+        // Allow any Vercel preview deploy for your project
+        const isVercelPreview = /^https:\/\/fasha-market-frontend.*\.vercel\.app$/.test(origin)
+
+        if (allowedOrigins.includes(origin) || isVercelPreview) {
+            return callback(null, true)
         }
+
+        return callback(new Error(`CORS blocked: ${origin}`))
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
-}))
+}
+
+// Handle OPTIONS preflight BEFORE all routes
+app.options('*', cors(corsOptions))
+app.use(cors(corsOptions))
+
 /**
  * BODY PARSING
  */
@@ -85,7 +91,7 @@ const uploadLimiter = rateLimit({
 app.use(globalLimiter)
 
 /**
- * ROOT ROUTE (for browser testing)
+ * ROOT ROUTE
  */
 app.get('/', (req, res) => {
     res.json({
