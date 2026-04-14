@@ -18,21 +18,48 @@ const app = express()
 
 app.set('trust proxy', 1)
 
+/**
+ * SECURITY HEADERS
+ */
 app.use(helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     contentSecurityPolicy: false,
 }))
 
+/**
+ * CORS FIX (Vercel + Local + Postman safe)
+ */
+const allowedOrigins = [
+    'https://fashamarket.vercel.app',
+    'https://fasha-market-frontend-9xfpdk2ae-yves-projects-49262b89.vercel.app',
+    'http://localhost:5173'
+]
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: function (origin, callback) {
+        // Allow tools like Postman / mobile apps
+        if (!origin) return callback(null, true)
+
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true)
+        } else {
+            return callback(new Error('Not allowed by CORS'))
+        }
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
 }))
 
+/**
+ * BODY PARSING
+ */
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
+/**
+ * RATE LIMITERS
+ */
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 200,
@@ -57,8 +84,9 @@ const uploadLimiter = rateLimit({
 
 app.use(globalLimiter)
 
-
-// ✅ FIX ADDED (DO NOT REMOVE ANYTHING ELSE)
+/**
+ * ROOT ROUTE (for browser testing)
+ */
 app.get('/', (req, res) => {
     res.json({
         message: 'FashaMarket API is running 🚀',
@@ -67,11 +95,16 @@ app.get('/', (req, res) => {
     })
 })
 
-
+/**
+ * HEALTH CHECK
+ */
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
+/**
+ * ROUTES
+ */
 app.use('/api/auth/login', authLimiter)
 app.use('/api/auth/register', authLimiter)
 app.use('/api/auth', authRoutes)
@@ -82,8 +115,14 @@ app.use('/api/upload', uploadLimiter, uploadRoutes)
 app.use('/api/categories', categoryRoutes)
 app.use('/api/reviews', reviewRoutes)
 
+/**
+ * ERROR HANDLER
+ */
 app.use(errorHandler)
 
+/**
+ * START SERVER
+ */
 const PORT = Number(process.env.PORT) || 5000
 
 app.listen(PORT, '0.0.0.0', () => {
@@ -93,6 +132,9 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`JWT Secret exists: ${!!process.env.JWT_SECRET}`)
 })
 
+/**
+ * PROCESS HANDLERS
+ */
 process.on('unhandledRejection', (err) => {
     console.error('Unhandled rejection:', err)
 })
