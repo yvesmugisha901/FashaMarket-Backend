@@ -31,26 +31,26 @@ app.use(helmet({
  */
 const allowedOrigins = [
     'https://fashamarket.vercel.app',
-    'https://fasha-market-frontend-9xfpdk2ae-yves-projects-49262b89.vercel.app',
+    'https://fasha-market-frontend-4q2piabh1-yves-projects-49262b89.vercel.app',
     'http://localhost:5173'
 ]
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Allow tools like Postman / mobile apps
+        // allow Postman / server-to-server requests
         if (!origin) return callback(null, true)
 
         if (allowedOrigins.includes(origin)) {
-            return callback(null, true)
+            callback(null, true)
         } else {
-            return callback(new Error('Not allowed by CORS'))
+            // IMPORTANT: do NOT throw error (this breaks CORS preflight)
+            callback(null, false)
         }
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
 }))
-
 /**
  * BODY PARSING
  */
