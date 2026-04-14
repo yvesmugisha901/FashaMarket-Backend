@@ -57,6 +57,17 @@ const uploadLimiter = rateLimit({
 
 app.use(globalLimiter)
 
+
+// ✅ FIX ADDED (DO NOT REMOVE ANYTHING ELSE)
+app.get('/', (req, res) => {
+    res.json({
+        message: 'FashaMarket API is running 🚀',
+        health: '/api/health',
+        status: 'OK'
+    })
+})
+
+
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
