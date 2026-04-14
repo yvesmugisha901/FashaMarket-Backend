@@ -3,11 +3,15 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
+const isProduction = process.env.NODE_ENV === 'production'
+
 const pool = new Pool(
     process.env.DATABASE_URL
         ? {
             connectionString: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false },
+            ssl: {
+                rejectUnauthorized: false,
+            },
         }
         : {
             host: process.env.DB_HOST,
