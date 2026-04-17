@@ -40,15 +40,20 @@ Seller: ${sellerName}
    This agreement is binding once the buyer has signed.
 `.trim()
 
+// ── Fixed: removed stock_quantity check & settings table lookup ──────────────
 export const create = async (req: any, res: Response) => {
     const { product_id, payment_method } = req.body
     try {
+        // FIX 1: Removed stock_quantity from SELECT — column doesn't exist in schema
         const product = await pool.query(
-            `SELECT p.*, u.name as seller_name FROM products p
-       JOIN users u ON p.seller_id = u.id
-       WHERE p.id = $1 AND p.status = 'APPROVED'`,
+            `SELECT p.id, p.title, p.price, p.seller_id, p.status,
+                    u.name as seller_name
+             FROM products p
+             JOIN users u ON p.seller_id = u.id
+             WHERE p.id = $1 AND p.status = 'APPROVED'`,
             [product_id]
         )
+
         if (product.rows.length === 0) {
             return res.status(404).json({ message: 'Product not available' })
         }
@@ -59,9 +64,17 @@ export const create = async (req: any, res: Response) => {
             return res.status(400).json({ message: 'You cannot buy your own product' })
         }
 
-        // Check stock
-        if (p.stock_quantity <= 0) {
-            return res.status(400).json({ message: 'This product is out of stock.' })
+        // FIX 2: Removed stock_quantity <= 0 check — column doesn't exist
+        // FIX 3: Check if product already has a PENDING/ACTIVE order (replaces stock check)
+        const existingOrder = await pool.query(
+            `SELECT id FROM orders
+             WHERE product_id = $1
+               AND status NOT IN ('CANCELLED', 'DELIVERED')
+             LIMIT 1`,
+            [product_id]
+        )
+        if (existingOrder.rows.length > 0) {
+            return res.status(400).json({ message: 'This product already has an active order.' })
         }
 
         const buyer = await pool.query(
@@ -70,30 +83,31 @@ export const create = async (req: any, res: Response) => {
         )
         const buyerName = buyer.rows[0].name
 
-        // Get commission rate
-        const settingsResult = await pool.query(
-            `SELECT value FROM settings WHERE key = 'commission_rate'`
-        )
-        const commissionRate = parseFloat(settingsResult.rows[0]?.value || '10')
+        // FIX 4: Removed settings table query — hardcode 10% commission rate
+        // (add a settings table later if you need dynamic rates)
+        const commissionRate = 10
         const commissionAmount = (p.price * commissionRate) / 100
         const sellerAmount = p.price - commissionAmount
 
-        // Reduce stock by 1
+        // FIX 5: Removed stock_quantity UPDATE — column doesn't exist
+        // Mark product as SOLD when order is created to prevent double orders
         await pool.query(
-            `UPDATE products SET stock_quantity = stock_quantity - 1 WHERE id = $1`,
+            `UPDATE products SET status = 'SOLD' WHERE id = $1`,
             [product_id]
         )
 
         const order = await pool.query(
-            `INSERT INTO orders (user_id, product_id, payment_method, status, commission_rate, commission_amount, seller_amount)
-       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6)
-       RETURNING *`,
+            `INSERT INTO orders
+               (user_id, product_id, payment_method, status,
+                commission_rate, commission_amount, seller_amount)
+             VALUES ($1, $2, $3, 'PENDING', $4, $5, $6)
+             RETURNING *`,
             [req.user.id, product_id, payment_method, commissionRate, commissionAmount, sellerAmount]
         )
 
         await pool.query(
             `INSERT INTO agreements (order_id, agreement_text, seller_id)
-       VALUES ($1, $2, $3)`,
+             VALUES ($1, $2, $3)`,
             [order.rows[0].id, AGREEMENT_TEXT(p.title, p.price, buyerName, p.seller_name), p.seller_id]
         )
 
@@ -150,8 +164,8 @@ export const sellerSignAgreement = async (req: any, res: Response) => {
     try {
         const agreement = await pool.query(
             `SELECT a.* FROM agreements a
-       JOIN orders o ON a.order_id = o.id
-       WHERE a.order_id = $1 AND a.seller_id = $2`,
+             JOIN orders o ON a.order_id = o.id
+             WHERE a.order_id = $1 AND a.seller_id = $2`,
             [id, req.user.id]
         )
         if (agreement.rows.length === 0) {
@@ -202,10 +216,10 @@ export const confirmPayment = async (req: any, res: Response) => {
         )
         const orderData = await pool.query(
             `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
-       FROM orders o
-       JOIN users u ON o.user_id = u.id
-       JOIN products p ON o.product_id = p.id
-       WHERE o.id = $1`,
+             FROM orders o
+             JOIN users u ON o.user_id = u.id
+             JOIN products p ON o.product_id = p.id
+             WHERE o.id = $1`,
             [id]
         )
         if (orderData.rows.length > 0) {
@@ -235,9 +249,9 @@ export const confirmReceived = async (req: any, res: Response) => {
         )
         const orderData = await pool.query(
             `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
-       FROM orders o JOIN users u ON o.user_id = u.id
-       JOIN products p ON o.product_id = p.id
-       WHERE o.id = $1`,
+             FROM orders o JOIN users u ON o.user_id = u.id
+             JOIN products p ON o.product_id = p.id
+             WHERE o.id = $1`,
             [id]
         )
         if (orderData.rows.length > 0) {
@@ -255,16 +269,16 @@ export const getById = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*,
-              p.title as product_title, p.price as product_price,
-              p.images as product_images, p.seller_id,
-              u.name as seller_name,
-              a.agreement_text, a.signed_at as buyer_signed_at,
-              a.seller_signed_at
-       FROM orders o
-       JOIN products p ON o.product_id = p.id
-       JOIN users u ON p.seller_id = u.id
-       LEFT JOIN agreements a ON a.order_id = o.id
-       WHERE o.id = $1 AND o.user_id = $2`,
+                    p.title as product_title, p.price as product_price,
+                    p.images as product_images, p.seller_id,
+                    u.name as seller_name,
+                    a.agreement_text, a.signed_at as buyer_signed_at,
+                    a.seller_signed_at
+             FROM orders o
+             JOIN products p ON o.product_id = p.id
+             JOIN users u ON p.seller_id = u.id
+             LEFT JOIN agreements a ON a.order_id = o.id
+             WHERE o.id = $1 AND o.user_id = $2`,
             [req.params.id, req.user.id]
         )
         if (result.rows.length === 0) {
@@ -281,11 +295,11 @@ export const myOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*, p.title as product_title, p.price as product_price,
-              p.images as product_images
-       FROM orders o
-       JOIN products p ON o.product_id = p.id
-       WHERE o.user_id = $1
-       ORDER BY o.created_at DESC`,
+                    p.images as product_images
+             FROM orders o
+             JOIN products p ON o.product_id = p.id
+             WHERE o.user_id = $1
+             ORDER BY o.created_at DESC`,
             [req.user.id]
         )
         return res.json({ data: result.rows })
@@ -295,19 +309,21 @@ export const myOrders = async (req: any, res: Response) => {
     }
 }
 
+// FIX 6: Removed stock_quantity from sellerOrders SELECT — column doesn't exist
 export const sellerOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
-            `SELECT o.*, p.title as product_title, p.price as product_price,
-              p.stock_quantity,
-              u.name as buyer_name, u.phone as buyer_phone, u.email as buyer_email,
-              a.signed_at as buyer_signed_at, a.seller_signed_at
-       FROM orders o
-       JOIN products p ON o.product_id = p.id
-       JOIN users u ON o.user_id = u.id
-       LEFT JOIN agreements a ON a.order_id = o.id
-       WHERE p.seller_id = $1
-       ORDER BY o.created_at DESC`,
+            `SELECT o.*,
+                    p.title as product_title, p.price as product_price,
+                    p.condition as product_condition,
+                    u.name as buyer_name, u.phone as buyer_phone, u.email as buyer_email,
+                    a.signed_at as buyer_signed_at, a.seller_signed_at
+             FROM orders o
+             JOIN products p ON o.product_id = p.id
+             JOIN users u ON o.user_id = u.id
+             LEFT JOIN agreements a ON a.order_id = o.id
+             WHERE p.seller_id = $1
+             ORDER BY o.created_at DESC`,
             [req.user.id]
         )
         return res.json({ data: result.rows })
@@ -326,9 +342,9 @@ export const updateStatus = async (req: any, res: Response) => {
         )
         const orderData = await pool.query(
             `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
-       FROM orders o JOIN users u ON o.user_id = u.id
-       JOIN products p ON o.product_id = p.id
-       WHERE o.id = $1`,
+             FROM orders o JOIN users u ON o.user_id = u.id
+             JOIN products p ON o.product_id = p.id
+             WHERE o.id = $1`,
             [req.params.id]
         )
         if (orderData.rows.length > 0) {
@@ -346,15 +362,15 @@ export const getAll = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*, p.title as product_title, p.price as product_price,
-              u.name as buyer_name,
-              a.signed_at as buyer_signed_at,
-              a.seller_signed_at,
-              a.agreement_text
-       FROM orders o
-       JOIN products p ON o.product_id = p.id
-       JOIN users u ON o.user_id = u.id
-       LEFT JOIN agreements a ON a.order_id = o.id
-       ORDER BY o.created_at DESC`
+                    u.name as buyer_name,
+                    a.signed_at as buyer_signed_at,
+                    a.seller_signed_at,
+                    a.agreement_text
+             FROM orders o
+             JOIN products p ON o.product_id = p.id
+             JOIN users u ON o.user_id = u.id
+             LEFT JOIN agreements a ON a.order_id = o.id
+             ORDER BY o.created_at DESC`
         )
         return res.json({ data: result.rows })
     } catch (err) {
@@ -368,8 +384,8 @@ export const confirmCashReceived = async (req: any, res: Response) => {
     try {
         const order = await pool.query(
             `SELECT o.* FROM orders o
-       JOIN products p ON o.product_id = p.id
-       WHERE o.id = $1 AND p.seller_id = $2`,
+             JOIN products p ON o.product_id = p.id
+             WHERE o.id = $1 AND p.seller_id = $2`,
             [id, req.user.id]
         )
         if (order.rows.length === 0) {
@@ -380,7 +396,7 @@ export const confirmCashReceived = async (req: any, res: Response) => {
         }
         await pool.query(
             `UPDATE orders SET status = 'PAID', payment_confirmed_at = NOW(),
-       payment_reference = 'CASH_ON_DELIVERY' WHERE id = $1`,
+             payment_reference = 'CASH_ON_DELIVERY' WHERE id = $1`,
             [id]
         )
         return res.json({ message: 'Cash payment confirmed' })
