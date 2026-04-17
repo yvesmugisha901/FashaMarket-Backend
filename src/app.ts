@@ -11,6 +11,8 @@ import adminRoutes from './routes/admin'
 import uploadRoutes from './routes/upload'
 import categoryRoutes from './routes/categories'
 import reviewRoutes from './routes/reviews'
+import cartRoutes from './routes/cart'
+
 
 dotenv.config()
 
@@ -120,6 +122,7 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/upload', uploadLimiter, uploadRoutes)
 app.use('/api/categories', categoryRoutes)
 app.use('/api/reviews', reviewRoutes)
+app.use('/api/cart', cartRoutes)
 
 /**
  * ERROR HANDLER
