@@ -40,13 +40,13 @@ Seller: ${sellerName}
    This agreement is binding once the buyer has signed.
 `.trim()
 
-// ── Fixed: removed stock_quantity check & settings table lookup ──────────────
 export const create = async (req: any, res: Response) => {
     const { product_id, payment_method } = req.body
     try {
-        // FIX 1: Removed stock_quantity from SELECT — column doesn't exist in schema
+        // ✅ Now includes stock_quantity in SELECT
         const product = await pool.query(
             `SELECT p.id, p.title, p.price, p.seller_id, p.status,
+                    p.stock_quantity,
                     u.name as seller_name
              FROM products p
              JOIN users u ON p.seller_id = u.id
@@ -64,17 +64,9 @@ export const create = async (req: any, res: Response) => {
             return res.status(400).json({ message: 'You cannot buy your own product' })
         }
 
-        // FIX 2: Removed stock_quantity <= 0 check — column doesn't exist
-        // FIX 3: Check if product already has a PENDING/ACTIVE order (replaces stock check)
-        const existingOrder = await pool.query(
-            `SELECT id FROM orders
-             WHERE product_id = $1
-               AND status NOT IN ('CANCELLED', 'DELIVERED')
-             LIMIT 1`,
-            [product_id]
-        )
-        if (existingOrder.rows.length > 0) {
-            return res.status(400).json({ message: 'This product already has an active order.' })
+        // ✅ Replaced "active order" check with stock check
+        if (p.stock_quantity <= 0) {
+            return res.status(400).json({ message: 'This product is out of stock.' })
         }
 
         const buyer = await pool.query(
@@ -83,16 +75,16 @@ export const create = async (req: any, res: Response) => {
         )
         const buyerName = buyer.rows[0].name
 
-        // FIX 4: Removed settings table query — hardcode 10% commission rate
-        // (add a settings table later if you need dynamic rates)
         const commissionRate = 10
         const commissionAmount = (p.price * commissionRate) / 100
         const sellerAmount = p.price - commissionAmount
 
-        // FIX 5: Removed stock_quantity UPDATE — column doesn't exist
-        // Mark product as SOLD when order is created to prevent double orders
+        // ✅ Decrement stock by 1; auto-mark SOLD when it hits 0
         await pool.query(
-            `UPDATE products SET status = 'SOLD' WHERE id = $1`,
+            `UPDATE products
+             SET stock_quantity = stock_quantity - 1,
+                 status = CASE WHEN stock_quantity - 1 <= 0 THEN 'SOLD' ELSE status END
+             WHERE id = $1`,
             [product_id]
         )
 
@@ -309,7 +301,6 @@ export const myOrders = async (req: any, res: Response) => {
     }
 }
 
-// FIX 6: Removed stock_quantity from sellerOrders SELECT — column doesn't exist
 export const sellerOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(

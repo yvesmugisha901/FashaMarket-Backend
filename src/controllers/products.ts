@@ -10,8 +10,11 @@ export const getAll = async (req: Request, res: Response) => {
       FROM products p
       JOIN users u ON p.seller_id = u.id
       JOIN categories c ON p.category_id = c.id
-      WHERE p.status = 'APPROVED'
+      WHERE (p.status = 'APPROVED' OR p.status = 'SOLD')
     `
+        // ✅ Changed: also returns SOLD products so frontend can show "Sold Out"
+        // Previously only returned APPROVED — now SOLD items appear with disabled button
+
         const params: any[] = []
         let i = 1
 

@@ -8,20 +8,21 @@ export const getCart = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT
-                ci.id as cart_item_id,
+                ci.id             AS cart_item_id,
                 ci.added_at,
-                p.id as product_id,
+                p.id              AS product_id,
                 p.title,
                 p.price,
                 p.images,
                 p.condition,
-                p.status as product_status,
-                u.name as seller_name,
-                u.verified_status as seller_verified,
-                c.name as category_name
+                p.status          AS product_status,
+                p.stock_quantity,
+                u.name            AS seller_name,
+                u.verified_status AS seller_verified,
+                c.name            AS category_name
              FROM cart_items ci
-             JOIN products p ON ci.product_id = p.id
-             JOIN users u ON p.seller_id = u.id
+             JOIN products  p ON ci.product_id  = p.id
+             JOIN users     u ON p.seller_id    = u.id
              JOIN categories c ON p.category_id = c.id
              WHERE ci.user_id = $1
              ORDER BY ci.added_at DESC`,
@@ -41,22 +42,32 @@ export const addToCart = async (req: any, res: Response) => {
         return res.status(400).json({ message: 'product_id is required' })
     }
     try {
-        // Make sure product exists and is approved
         const product = await pool.query(
-            `SELECT id, seller_id, status FROM products WHERE id = $1`,
+            `SELECT id, seller_id, status, stock_quantity FROM products WHERE id = $1`,
             [product_id]
         )
         if (product.rows.length === 0) {
             return res.status(404).json({ message: 'Product not found' })
         }
-        if (product.rows[0].status !== 'APPROVED') {
+
+        const p = product.rows[0]
+
+        // ✅ FIX: Check APPROVED *and* SOLD together in one clear block.
+        // Previously the APPROVED check fired first (returning 400 for SOLD products),
+        // making the stock_quantity / SOLD check below it unreachable dead code.
+        // Now: SOLD products are caught by the stock check, PENDING/REJECTED by the status check.
+        if (p.stock_quantity <= 0 || p.status === 'SOLD') {
+            return res.status(400).json({ message: 'This product is out of stock' })
+        }
+
+        if (p.status !== 'APPROVED') {
             return res.status(400).json({ message: 'Product is not available' })
         }
-        if (product.rows[0].seller_id === req.user.id) {
+
+        if (p.seller_id === req.user.id) {
             return res.status(400).json({ message: 'You cannot add your own product to cart' })
         }
 
-        // Upsert — ignore if already in cart
         await pool.query(
             `INSERT INTO cart_items (user_id, product_id)
              VALUES ($1, $2)
@@ -87,7 +98,10 @@ export const removeFromCart = async (req: any, res: Response) => {
 // DELETE /api/cart  — clear entire cart
 export const clearCart = async (req: any, res: Response) => {
     try {
-        await pool.query(`DELETE FROM cart_items WHERE user_id = $1`, [req.user.id])
+        await pool.query(
+            `DELETE FROM cart_items WHERE user_id = $1`,
+            [req.user.id]
+        )
         return res.json({ message: 'Cart cleared' })
     } catch (err) {
         console.error(err)
