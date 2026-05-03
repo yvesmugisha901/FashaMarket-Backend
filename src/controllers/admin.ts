@@ -22,15 +22,14 @@ export const getStats = async (req: any, res: Response) => {
             pool.query(`SELECT COUNT(*) FROM users WHERE role != 'ADMIN'`),
             pool.query(`SELECT COUNT(*) FROM products`),
             pool.query(`SELECT COUNT(*) FROM orders`),
-            pool.query(`SELECT COALESCE(SUM(p.price), 0) as total
-                  FROM orders o JOIN products p ON o.product_id = p.id
-                  WHERE o.status = 'DELIVERED'`),
+            pool.query(`SELECT COALESCE(SUM(commission_amount + seller_amount), 0) as total
+                        FROM orders WHERE status = 'PAID'`),
         ])
         const pendingProducts = await pool.query(`SELECT COUNT(*) FROM products WHERE status = 'PENDING'`)
         const pendingOrders = await pool.query(`SELECT COUNT(*) FROM orders WHERE status = 'PENDING'`)
         const todayOrders = await pool.query(`SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE`)
         const commission = await pool.query(
-            `SELECT COALESCE(SUM(commission_amount), 0) as total FROM orders WHERE status = 'DELIVERED'`
+            `SELECT COALESCE(SUM(commission_amount), 0) as total FROM orders WHERE status = 'PAID'`
         )
 
         return res.json({
@@ -218,10 +217,9 @@ export const getRevenueReport = async (req: any, res: Response) => {
         const daily = await pool.query(
             `SELECT DATE(o.created_at) as date,
               COUNT(*) as order_count,
-              SUM(p.price) as revenue
+              SUM(o.commission_amount + o.seller_amount) as revenue
        FROM orders o
-       JOIN products p ON o.product_id = p.id
-       WHERE o.status = 'DELIVERED'
+       WHERE o.status = 'PAID'
        AND o.created_at >= NOW() - INTERVAL '30 days'
        GROUP BY DATE(o.created_at)
        ORDER BY date DESC`
@@ -230,11 +228,11 @@ export const getRevenueReport = async (req: any, res: Response) => {
         const byCategory = await pool.query(
             `SELECT c.name as category,
               COUNT(*) as sales,
-              SUM(p.price) as revenue
+              SUM(o.commission_amount + o.seller_amount) as revenue
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN categories c ON p.category_id = c.id
-       WHERE o.status = 'DELIVERED'
+       WHERE o.status = 'PAID'
        GROUP BY c.name
        ORDER BY revenue DESC`
         )
