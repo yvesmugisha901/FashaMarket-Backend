@@ -1,5 +1,3 @@
-// backend/src/controllers/admin.ts
-
 import { Request, Response } from 'express'
 import pool from '../config/db'
 import { sendProductApprovedEmail, sendProductRejectedEmail } from '../config/email'
@@ -13,7 +11,7 @@ const logAction = async (
 ) => {
     await pool.query(
         `INSERT INTO audit_logs (admin_id, action, target_type, target_id, details)
-         VALUES ($1, $2, $3, $4, $5)`,
+     VALUES ($1, $2, $3, $4, $5)`,
         [adminId, action, targetType, targetId, details]
     )
 }
@@ -36,17 +34,12 @@ export const getStats = async (req: any, res: Response) => {
             `SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE`
         )
 
-        // ✅ FIX: Use DELIVERED (fully complete) not PAID (payment confirmed but not yet received)
-        // Your order flow: PENDING → AWAITING_CONFIRMATION → PAID → SHIPPED → DELIVERED
-        // commission_amount = price * 10% stored at order creation — already correct per-order
-        // total_revenue = commission_amount + seller_amount = full product price (GMV)
-        // total_commission = platform's 10% cut only
         const revenue = await pool.query(
             `SELECT
-                COALESCE(SUM(commission_amount + seller_amount), 0) AS total_revenue,
-                COALESCE(SUM(commission_amount), 0)                 AS total_commission
-             FROM orders
-             WHERE status = 'DELIVERED'`
+        COALESCE(SUM(commission_amount + seller_amount), 0) AS total_revenue,
+        COALESCE(SUM(commission_amount), 0) AS total_commission
+       FROM orders
+       WHERE status IN ('PAID', 'SHIPPED', 'DELIVERED')`
         )
 
         return res.json({
@@ -71,10 +64,10 @@ export const getAllUsers = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT id, name, email, phone, role, verified_status, created_at,
-                (SELECT COUNT(*) FROM products WHERE seller_id = users.id) as product_count,
-                (SELECT COUNT(*) FROM orders   WHERE user_id   = users.id) as order_count
-             FROM users
-             ORDER BY created_at DESC`
+        (SELECT COUNT(*) FROM products WHERE seller_id = users.id) as product_count,
+        (SELECT COUNT(*) FROM orders WHERE user_id = users.id) as order_count
+       FROM users
+       ORDER BY created_at DESC`
         )
         return res.json({ data: result.rows })
     } catch (err) {
@@ -124,10 +117,10 @@ export const getAllProducts = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT p.*, u.name as seller_name, c.name as category_name
-             FROM products p
-             JOIN users u      ON p.seller_id   = u.id
-             JOIN categories c ON p.category_id = c.id
-             ORDER BY p.created_at DESC`
+       FROM products p
+       JOIN users u ON p.seller_id = u.id
+       JOIN categories c ON p.category_id = c.id
+       ORDER BY p.created_at DESC`
         )
         return res.json({ data: result.rows })
     } catch (err) {
@@ -144,8 +137,8 @@ export const approveProduct = async (req: any, res: Response) => {
 
         const product = await pool.query(
             `SELECT p.title, u.name, u.email
-             FROM products p JOIN users u ON p.seller_id = u.id
-             WHERE p.id = $1`,
+       FROM products p JOIN users u ON p.seller_id = u.id
+       WHERE p.id = $1`,
             [id]
         )
         if (product.rows.length > 0) {
@@ -167,8 +160,8 @@ export const rejectProduct = async (req: any, res: Response) => {
 
         const product = await pool.query(
             `SELECT p.title, u.name, u.email
-             FROM products p JOIN users u ON p.seller_id = u.id
-             WHERE p.id = $1`,
+       FROM products p JOIN users u ON p.seller_id = u.id
+       WHERE p.id = $1`,
             [id]
         )
         if (product.rows.length > 0) {
@@ -186,17 +179,17 @@ export const getAllOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT
-                o.*,
-                p.title AS product_title,
-                p.price AS product_price,
-                u.name  AS buyer_name,
-                u.phone AS buyer_phone,
-                o.payment_reference,
-                o.payment_confirmed_at
-             FROM orders o
-             JOIN products p ON o.product_id = p.id
-             JOIN users    u ON o.user_id    = u.id
-             ORDER BY o.created_at DESC`
+        o.*,
+        p.title AS product_title,
+        p.price AS product_price,
+        u.name AS buyer_name,
+        u.phone AS buyer_phone,
+        o.payment_reference,
+        o.payment_confirmed_at
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       JOIN users u ON o.user_id = u.id
+       ORDER BY o.created_at DESC`
         )
         return res.json({ data: result.rows })
     } catch (err) {
@@ -222,10 +215,10 @@ export const getAuditLogs = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT a.*, u.name as admin_name
-             FROM audit_logs a
-             JOIN users u ON a.admin_id = u.id
-             ORDER BY a.created_at DESC
-             LIMIT 200`
+       FROM audit_logs a
+       JOIN users u ON a.admin_id = u.id
+       ORDER BY a.created_at DESC
+       LIMIT 200`
         )
         return res.json({ data: result.rows })
     } catch (err) {
@@ -236,32 +229,31 @@ export const getAuditLogs = async (req: any, res: Response) => {
 
 export const getRevenueReport = async (req: any, res: Response) => {
     try {
-        // ✅ Also use DELIVERED to stay consistent with stats card
         const daily = await pool.query(
             `SELECT
-                DATE(o.created_at)                          AS date,
-                COUNT(*)                                    AS order_count,
-                SUM(o.commission_amount + o.seller_amount)  AS revenue,
-                SUM(o.commission_amount)                    AS commission
-             FROM orders o
-             WHERE o.status = 'DELIVERED'
-             AND o.created_at >= NOW() - INTERVAL '30 days'
-             GROUP BY DATE(o.created_at)
-             ORDER BY date DESC`
+        DATE(o.created_at) AS date,
+        COUNT(*) AS order_count,
+        SUM(o.commission_amount + o.seller_amount) AS revenue,
+        SUM(o.commission_amount) AS commission
+       FROM orders o
+       WHERE o.status IN ('PAID', 'SHIPPED', 'DELIVERED')
+       AND o.created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY DATE(o.created_at)
+       ORDER BY date DESC`
         )
 
         const byCategory = await pool.query(
             `SELECT
-                c.name                                      AS category,
-                COUNT(*)                                    AS sales,
-                SUM(o.commission_amount + o.seller_amount)  AS revenue,
-                SUM(o.commission_amount)                    AS commission
-             FROM orders o
-             JOIN products   p ON o.product_id  = p.id
-             JOIN categories c ON p.category_id = c.id
-             WHERE o.status = 'DELIVERED'
-             GROUP BY c.name
-             ORDER BY revenue DESC`
+        c.name AS category,
+        COUNT(*) AS sales,
+        SUM(o.commission_amount + o.seller_amount) AS revenue,
+        SUM(o.commission_amount) AS commission
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       JOIN categories c ON p.category_id = c.id
+       WHERE o.status IN ('PAID', 'SHIPPED', 'DELIVERED')
+       GROUP BY c.name
+       ORDER BY revenue DESC`
         )
 
         return res.json({
@@ -270,6 +262,21 @@ export const getRevenueReport = async (req: any, res: Response) => {
                 by_category: byCategory.rows,
             }
         })
+    } catch (err) {
+        console.error(err)
+        return res.status(500).json({ message: 'Server error' })
+    }
+}
+
+export const confirmPayment = async (req: any, res: Response) => {
+    const { id } = req.params
+    try {
+        await pool.query(
+            `UPDATE orders SET status = 'PAID', payment_confirmed_at = NOW() WHERE id = $1`,
+            [id]
+        )
+        await logAction(req.user.id, 'CONFIRM_PAYMENT', 'order', id, 'Payment confirmed')
+        return res.json({ message: 'Payment confirmed' })
     } catch (err) {
         console.error(err)
         return res.status(500).json({ message: 'Server error' })
