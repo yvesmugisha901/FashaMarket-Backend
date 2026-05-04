@@ -1,5 +1,3 @@
-// backend/src/controllers/orders.ts
-
 import { Response } from 'express'
 import pool from '../config/db'
 import {
@@ -47,58 +45,51 @@ export const create = async (req: any, res: Response) => {
     try {
         const product = await pool.query(
             `SELECT p.id, p.title, p.price, p.seller_id, p.status,
-                    p.stock_quantity,
-                    u.name as seller_name
-             FROM products p
-             JOIN users u ON p.seller_id = u.id
-             WHERE p.id = $1 AND p.status = 'APPROVED'`,
+              p.stock_quantity, u.name as seller_name
+       FROM products p
+       JOIN users u ON p.seller_id = u.id
+       WHERE p.id = $1 AND p.status = 'APPROVED'`,
             [product_id]
         )
-
         if (product.rows.length === 0) {
             return res.status(404).json({ message: 'Product not available' })
         }
-
         const p = product.rows[0]
-
         if (p.seller_id === req.user.id) {
             return res.status(400).json({ message: 'You cannot buy your own product' })
         }
-
         if (p.stock_quantity <= 0) {
             return res.status(400).json({ message: 'This product is out of stock.' })
         }
-
         const buyer = await pool.query(
             'SELECT name, email FROM users WHERE id = $1',
             [req.user.id]
         )
         const buyerName = buyer.rows[0].name
-
         const commissionRate = 10
         const commissionAmount = (p.price * commissionRate) / 100
         const sellerAmount = p.price - commissionAmount
 
         await pool.query(
             `UPDATE products
-             SET stock_quantity = stock_quantity - 1,
-                 status = CASE WHEN stock_quantity - 1 <= 0 THEN 'SOLD' ELSE status END
-             WHERE id = $1`,
+       SET stock_quantity = stock_quantity - 1,
+           status = CASE WHEN stock_quantity - 1 <= 0 THEN 'SOLD' ELSE status END
+       WHERE id = $1`,
             [product_id]
         )
 
         const order = await pool.query(
             `INSERT INTO orders
-               (user_id, product_id, payment_method, status,
-                commission_rate, commission_amount, seller_amount)
-             VALUES ($1, $2, $3, 'PENDING', $4, $5, $6)
-             RETURNING *`,
+         (user_id, product_id, payment_method, status,
+          commission_rate, commission_amount, seller_amount)
+       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6)
+       RETURNING *`,
             [req.user.id, product_id, payment_method, commissionRate, commissionAmount, sellerAmount]
         )
 
         await pool.query(
             `INSERT INTO agreements (order_id, agreement_text, seller_id)
-             VALUES ($1, $2, $3)`,
+       VALUES ($1, $2, $3)`,
             [order.rows[0].id, AGREEMENT_TEXT(p.title, p.price, buyerName, p.seller_name), p.seller_id]
         )
 
@@ -108,20 +99,13 @@ export const create = async (req: any, res: Response) => {
         )
 
         sendOrderConfirmationEmail(
-            buyer.rows[0].email,
-            buyerName,
-            order.rows[0].id,
-            p.title,
-            p.price,
-            payment_method
+            buyer.rows[0].email, buyerName,
+            order.rows[0].id, p.title, p.price, payment_method
         ).catch(console.error)
 
         sendSellerNotificationEmail(
-            seller.rows[0].email,
-            seller.rows[0].name,
-            p.title,
-            buyerName,
-            order.rows[0].id
+            seller.rows[0].email, seller.rows[0].name,
+            p.title, buyerName, order.rows[0].id
         ).catch(console.error)
 
         return res.status(201).json({ data: order.rows[0] })
@@ -155,8 +139,8 @@ export const sellerSignAgreement = async (req: any, res: Response) => {
     try {
         const agreement = await pool.query(
             `SELECT a.* FROM agreements a
-             JOIN orders o ON a.order_id = o.id
-             WHERE a.order_id = $1 AND a.seller_id = $2`,
+       JOIN orders o ON a.order_id = o.id
+       WHERE a.order_id = $1 AND a.seller_id = $2`,
             [id, req.user.id]
         )
         if (agreement.rows.length === 0) {
@@ -198,7 +182,6 @@ export const submitPaymentProof = async (req: any, res: Response) => {
     }
 }
 
-// ADMIN only — confirms payment after verifying MoMo reference
 export const confirmPayment = async (req: any, res: Response) => {
     const { id } = req.params
     try {
@@ -208,10 +191,10 @@ export const confirmPayment = async (req: any, res: Response) => {
         )
         const orderData = await pool.query(
             `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
-             FROM orders o
-             JOIN users u ON o.user_id = u.id
-             JOIN products p ON o.product_id = p.id
-             WHERE o.id = $1`,
+       FROM orders o
+       JOIN users u ON o.user_id = u.id
+       JOIN products p ON o.product_id = p.id
+       WHERE o.id = $1`,
             [id]
         )
         if (orderData.rows.length > 0) {
@@ -225,36 +208,31 @@ export const confirmPayment = async (req: any, res: Response) => {
     }
 }
 
-// ✅ NEW — SELLER marks the order as shipped
-// Only the seller of the product can call this, and only when status is PAID
 export const markShipped = async (req: any, res: Response) => {
     const { id } = req.params
     try {
-        // Verify this order belongs to the calling seller's product
         const order = await pool.query(
             `SELECT o.* FROM orders o
-             JOIN products p ON o.product_id = p.id
-             WHERE o.id = $1 AND p.seller_id = $2`,
+       JOIN products p ON o.product_id = p.id
+       WHERE o.id = $1 AND p.seller_id = $2`,
             [id, req.user.id]
         )
         if (order.rows.length === 0) {
             return res.status(404).json({ message: 'Order not found' })
         }
-        // Guard: can only ship after payment is confirmed
         if (order.rows[0].status !== 'PAID') {
             return res.status(400).json({ message: 'Order must be PAID before marking as shipped' })
         }
         await pool.query(
-            `UPDATE orders SET status = 'SHIPPED', shipped_at = NOW() WHERE id = $1`,
+            `UPDATE orders SET status = 'SHIPPED' WHERE id = $1`,
             [id]
         )
-        // Notify buyer
         const orderData = await pool.query(
             `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
-             FROM orders o
-             JOIN users u ON o.user_id = u.id
-             JOIN products p ON o.product_id = p.id
-             WHERE o.id = $1`,
+       FROM orders o
+       JOIN users u ON o.user_id = u.id
+       JOIN products p ON o.product_id = p.id
+       WHERE o.id = $1`,
             [id]
         )
         if (orderData.rows.length > 0) {
@@ -268,8 +246,6 @@ export const markShipped = async (req: any, res: Response) => {
     }
 }
 
-// BUYER confirms they received the item — triggers DELIVERED status
-// Guard: order must be SHIPPED first (seller must have sent it)
 export const confirmReceived = async (req: any, res: Response) => {
     const { id } = req.params
     try {
@@ -280,19 +256,18 @@ export const confirmReceived = async (req: any, res: Response) => {
         if (order.rows.length === 0) {
             return res.status(404).json({ message: 'Order not found' })
         }
-        // ✅ FIX: Guard added — buyer can only confirm received after seller has shipped
         if (order.rows[0].status !== 'SHIPPED') {
             return res.status(400).json({ message: 'Order has not been shipped yet' })
         }
         await pool.query(
-            `UPDATE orders SET confirmed_received = true, status = 'DELIVERED', delivered_at = NOW() WHERE id = $1`,
+            `UPDATE orders SET confirmed_received = true, status = 'DELIVERED' WHERE id = $1`,
             [id]
         )
         const orderData = await pool.query(
             `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
-             FROM orders o JOIN users u ON o.user_id = u.id
-             JOIN products p ON o.product_id = p.id
-             WHERE o.id = $1`,
+       FROM orders o JOIN users u ON o.user_id = u.id
+       JOIN products p ON o.product_id = p.id
+       WHERE o.id = $1`,
             [id]
         )
         if (orderData.rows.length > 0) {
@@ -310,16 +285,16 @@ export const getById = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*,
-                    p.title as product_title, p.price as product_price,
-                    p.images as product_images, p.seller_id,
-                    u.name as seller_name,
-                    a.agreement_text, a.signed_at as buyer_signed_at,
-                    a.seller_signed_at
-             FROM orders o
-             JOIN products p ON o.product_id = p.id
-             JOIN users u ON p.seller_id = u.id
-             LEFT JOIN agreements a ON a.order_id = o.id
-             WHERE o.id = $1 AND o.user_id = $2`,
+              p.title as product_title, p.price as product_price,
+              p.images as product_images, p.seller_id,
+              u.name as seller_name,
+              a.agreement_text, a.signed_at as buyer_signed_at,
+              a.seller_signed_at
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       JOIN users u ON p.seller_id = u.id
+       LEFT JOIN agreements a ON a.order_id = o.id
+       WHERE o.id = $1 AND o.user_id = $2`,
             [req.params.id, req.user.id]
         )
         if (result.rows.length === 0) {
@@ -336,11 +311,11 @@ export const myOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*, p.title as product_title, p.price as product_price,
-                    p.images as product_images
-             FROM orders o
-             JOIN products p ON o.product_id = p.id
-             WHERE o.user_id = $1
-             ORDER BY o.created_at DESC`,
+              p.images as product_images
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       WHERE o.user_id = $1
+       ORDER BY o.created_at DESC`,
             [req.user.id]
         )
         return res.json({ data: result.rows })
@@ -354,16 +329,16 @@ export const sellerOrders = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*,
-                    p.title as product_title, p.price as product_price,
-                    p.condition as product_condition,
-                    u.name as buyer_name, u.phone as buyer_phone, u.email as buyer_email,
-                    a.signed_at as buyer_signed_at, a.seller_signed_at
-             FROM orders o
-             JOIN products p ON o.product_id = p.id
-             JOIN users u ON o.user_id = u.id
-             LEFT JOIN agreements a ON a.order_id = o.id
-             WHERE p.seller_id = $1
-             ORDER BY o.created_at DESC`,
+              p.title as product_title, p.price as product_price,
+              p.condition as product_condition,
+              u.name as buyer_name, u.phone as buyer_phone, u.email as buyer_email,
+              a.signed_at as buyer_signed_at, a.seller_signed_at
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       JOIN users u ON o.user_id = u.id
+       LEFT JOIN agreements a ON a.order_id = o.id
+       WHERE p.seller_id = $1
+       ORDER BY o.created_at DESC`,
             [req.user.id]
         )
         return res.json({ data: result.rows })
@@ -382,9 +357,9 @@ export const updateStatus = async (req: any, res: Response) => {
         )
         const orderData = await pool.query(
             `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
-             FROM orders o JOIN users u ON o.user_id = u.id
-             JOIN products p ON o.product_id = p.id
-             WHERE o.id = $1`,
+       FROM orders o JOIN users u ON o.user_id = u.id
+       JOIN products p ON o.product_id = p.id
+       WHERE o.id = $1`,
             [req.params.id]
         )
         if (orderData.rows.length > 0) {
@@ -402,15 +377,15 @@ export const getAll = async (req: any, res: Response) => {
     try {
         const result = await pool.query(
             `SELECT o.*, p.title as product_title, p.price as product_price,
-                    u.name as buyer_name,
-                    a.signed_at as buyer_signed_at,
-                    a.seller_signed_at,
-                    a.agreement_text
-             FROM orders o
-             JOIN products p ON o.product_id = p.id
-             JOIN users u ON o.user_id = u.id
-             LEFT JOIN agreements a ON a.order_id = o.id
-             ORDER BY o.created_at DESC`
+              u.name as buyer_name,
+              a.signed_at as buyer_signed_at,
+              a.seller_signed_at,
+              a.agreement_text
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       JOIN users u ON o.user_id = u.id
+       LEFT JOIN agreements a ON a.order_id = o.id
+       ORDER BY o.created_at DESC`
         )
         return res.json({ data: result.rows })
     } catch (err) {
@@ -424,8 +399,8 @@ export const confirmCashReceived = async (req: any, res: Response) => {
     try {
         const order = await pool.query(
             `SELECT o.* FROM orders o
-             JOIN products p ON o.product_id = p.id
-             WHERE o.id = $1 AND p.seller_id = $2`,
+       JOIN products p ON o.product_id = p.id
+       WHERE o.id = $1 AND p.seller_id = $2`,
             [id, req.user.id]
         )
         if (order.rows.length === 0) {
@@ -436,10 +411,39 @@ export const confirmCashReceived = async (req: any, res: Response) => {
         }
         await pool.query(
             `UPDATE orders SET status = 'PAID', payment_confirmed_at = NOW(),
-             payment_reference = 'CASH_ON_DELIVERY' WHERE id = $1`,
+       payment_reference = 'CASH_ON_DELIVERY' WHERE id = $1`,
             [id]
         )
         return res.json({ message: 'Cash payment confirmed' })
+    } catch (err) {
+        console.error(err)
+        return res.status(500).json({ message: 'Server error' })
+    }
+}
+
+export const cancelOrder = async (req: any, res: Response) => {
+    const { id } = req.params
+    try {
+        const order = await pool.query(
+            `SELECT * FROM orders WHERE id = $1 AND user_id = $2`,
+            [id, req.user.id]
+        )
+        if (order.rows.length === 0) {
+            return res.status(404).json({ message: 'Order not found' })
+        }
+        const o = order.rows[0]
+        if (!['PENDING'].includes(o.status)) {
+            return res.status(400).json({ message: 'Order can only be cancelled before payment is submitted.' })
+        }
+        await pool.query(
+            `UPDATE products SET stock_quantity = stock_quantity + 1 WHERE id = $1`,
+            [o.product_id]
+        )
+        await pool.query(
+            `UPDATE orders SET status = 'CANCELLED' WHERE id = $1`,
+            [id]
+        )
+        return res.json({ message: 'Order cancelled successfully.' })
     } catch (err) {
         console.error(err)
         return res.status(500).json({ message: 'Server error' })

@@ -1,20 +1,9 @@
-// backend/src/routes/orders.ts
-
 import { Router } from 'express'
 import {
-    create,
-    signAgreement,
-    sellerSignAgreement,
-    submitPaymentProof,
-    confirmPayment,
-    confirmCashReceived,
-    confirmReceived,
-    markShipped,          // ✅ NEW
-    getById,
-    myOrders,
-    sellerOrders,
-    updateStatus,
-    getAll
+    create, signAgreement, sellerSignAgreement,
+    submitPaymentProof, confirmPayment, confirmCashReceived,
+    confirmReceived, markShipped, cancelOrder,
+    getById, myOrders, sellerOrders, updateStatus, getAll
 } from '../controllers/orders'
 import { requireAuth, requireAdmin } from '../middleware/auth'
 
@@ -28,9 +17,10 @@ router.post('/:id/sign', requireAuth, signAgreement)
 router.post('/:id/seller-sign', requireAuth, sellerSignAgreement)
 router.post('/:id/payment-proof', requireAuth, submitPaymentProof)
 router.post('/:id/confirm-payment', requireAuth, requireAdmin, confirmPayment)
-router.post('/:id/mark-shipped', requireAuth, markShipped)   // ✅ NEW — seller only (guarded inside controller)
+router.post('/:id/mark-shipped', requireAuth, markShipped)
 router.post('/:id/confirm-received', requireAuth, confirmReceived)
 router.post('/:id/confirm-cash', requireAuth, confirmCashReceived)
+router.post('/:id/cancel', requireAuth, cancelOrder)
 router.patch('/:id/status', requireAuth, requireAdmin, updateStatus)
 router.get('/', requireAuth, requireAdmin, getAll)
 
