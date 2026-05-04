@@ -1,3 +1,5 @@
+// backend/src/controllers/orders.ts
+
 import { Response } from 'express'
 import pool from '../config/db'
 import {
@@ -43,7 +45,6 @@ Seller: ${sellerName}
 export const create = async (req: any, res: Response) => {
     const { product_id, payment_method } = req.body
     try {
-        // ✅ Now includes stock_quantity in SELECT
         const product = await pool.query(
             `SELECT p.id, p.title, p.price, p.seller_id, p.status,
                     p.stock_quantity,
@@ -64,7 +65,6 @@ export const create = async (req: any, res: Response) => {
             return res.status(400).json({ message: 'You cannot buy your own product' })
         }
 
-        // ✅ Replaced "active order" check with stock check
         if (p.stock_quantity <= 0) {
             return res.status(400).json({ message: 'This product is out of stock.' })
         }
@@ -79,7 +79,6 @@ export const create = async (req: any, res: Response) => {
         const commissionAmount = (p.price * commissionRate) / 100
         const sellerAmount = p.price - commissionAmount
 
-        // ✅ Decrement stock by 1; auto-mark SOLD when it hits 0
         await pool.query(
             `UPDATE products
              SET stock_quantity = stock_quantity - 1,
@@ -199,6 +198,7 @@ export const submitPaymentProof = async (req: any, res: Response) => {
     }
 }
 
+// ADMIN only — confirms payment after verifying MoMo reference
 export const confirmPayment = async (req: any, res: Response) => {
     const { id } = req.params
     try {
@@ -225,6 +225,51 @@ export const confirmPayment = async (req: any, res: Response) => {
     }
 }
 
+// ✅ NEW — SELLER marks the order as shipped
+// Only the seller of the product can call this, and only when status is PAID
+export const markShipped = async (req: any, res: Response) => {
+    const { id } = req.params
+    try {
+        // Verify this order belongs to the calling seller's product
+        const order = await pool.query(
+            `SELECT o.* FROM orders o
+             JOIN products p ON o.product_id = p.id
+             WHERE o.id = $1 AND p.seller_id = $2`,
+            [id, req.user.id]
+        )
+        if (order.rows.length === 0) {
+            return res.status(404).json({ message: 'Order not found' })
+        }
+        // Guard: can only ship after payment is confirmed
+        if (order.rows[0].status !== 'PAID') {
+            return res.status(400).json({ message: 'Order must be PAID before marking as shipped' })
+        }
+        await pool.query(
+            `UPDATE orders SET status = 'SHIPPED', shipped_at = NOW() WHERE id = $1`,
+            [id]
+        )
+        // Notify buyer
+        const orderData = await pool.query(
+            `SELECT o.*, u.name as buyer_name, u.email as buyer_email, p.title as product_title
+             FROM orders o
+             JOIN users u ON o.user_id = u.id
+             JOIN products p ON o.product_id = p.id
+             WHERE o.id = $1`,
+            [id]
+        )
+        if (orderData.rows.length > 0) {
+            const o = orderData.rows[0]
+            sendOrderStatusEmail(o.buyer_email, o.buyer_name, o.id, o.product_title, 'SHIPPED').catch(console.error)
+        }
+        return res.json({ message: 'Order marked as shipped' })
+    } catch (err) {
+        console.error(err)
+        return res.status(500).json({ message: 'Server error' })
+    }
+}
+
+// BUYER confirms they received the item — triggers DELIVERED status
+// Guard: order must be SHIPPED first (seller must have sent it)
 export const confirmReceived = async (req: any, res: Response) => {
     const { id } = req.params
     try {
@@ -235,8 +280,12 @@ export const confirmReceived = async (req: any, res: Response) => {
         if (order.rows.length === 0) {
             return res.status(404).json({ message: 'Order not found' })
         }
+        // ✅ FIX: Guard added — buyer can only confirm received after seller has shipped
+        if (order.rows[0].status !== 'SHIPPED') {
+            return res.status(400).json({ message: 'Order has not been shipped yet' })
+        }
         await pool.query(
-            `UPDATE orders SET confirmed_received = true, status = 'DELIVERED' WHERE id = $1`,
+            `UPDATE orders SET confirmed_received = true, status = 'DELIVERED', delivered_at = NOW() WHERE id = $1`,
             [id]
         )
         const orderData = await pool.query(
